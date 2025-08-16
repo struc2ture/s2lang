@@ -101,7 +101,6 @@ class Lexer:
         while self.peek().isalnum() or self.peek() == '_':
             ident += self.advance()
         KEYWORDS = {
-            'int',
             'return',
             'module',
             'import',
@@ -339,13 +338,13 @@ class Parser:
         self.expect('LBRACE')
         funcs = []
         while self.peek().kind != 'RBRACE':
-            ret_type = self.expect('INT').value
+            ret_type = self.expect('IDENT').value
             name = self.expect('IDENT').value
             self.expect('LPAREN')
             param_types = []
             if self.peek().kind != 'RPAREN':
                 while True:
-                    typ = self.expect('INT').value
+                    typ = self.expect('IDENT').value
                     self.expect('STAR', optional=True)
                     self.expect('IDENT') # skip param name
                     param_types.append(typ)
@@ -360,13 +359,13 @@ class Parser:
         return ExternBlock(header, funcs)
 
     def parse_function(self):
-        ret_type = self.expect('INT').value
+        ret_type = self.expect('IDENT').value
         name = self.expect('IDENT').value
         self.expect('LPAREN')
 
         params = []
         while self.peek().kind != 'RPAREN':
-            type_tok = self.expect('INT')
+            type_tok = self.expect('IDENT')
             name_tok = self.expect('IDENT')
             params.append((type_tok.value, name_tok.value))
             if self.peek().kind == 'COMMA':
@@ -385,10 +384,11 @@ class Parser:
             tok = self.peek()
             if tok.kind == 'RETURN':
                 stmts.append(self.parse_return())
-            elif tok.kind == 'INT':
-                stmts.append(self.parse_var_decl())
             elif tok.kind == 'IDENT':
-                stmts.append(self.parse_expr_stmt())
+                if self.peek2().kind == 'IDENT':
+                    stmts.append(self.parse_var_decl())
+                else:
+                    stmts.append(self.parse_expr_stmt())
         return stmts
 
     def parse_return(self):
@@ -398,7 +398,7 @@ class Parser:
         return Return(expr)
 
     def parse_var_decl(self):
-        var_type = self.expect('INT').value
+        var_type = self.expect('IDENT').value
         name = self.expect('IDENT').value
         self.expect('EQUAL')
         expr = self.parse_expr()
