@@ -2,6 +2,6 @@
 #define MATH_H
 
 int twice(int x);
-int add(int a,int b);
+int add(int a, int b);
 
 #endif

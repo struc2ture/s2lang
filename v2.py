@@ -9,22 +9,30 @@ def main():
 
 def build(dir, prog_name):
     # Parse modules
-    modules = []
+    modules = {}
     for filename in os.listdir(dir):
         filepath = os.path.join(dir, filename)
         if os.path.isfile(filepath):
-            modules.append(transpile_module(filepath))
+            module = open_and_parse_module(filepath)
+            modules[module.name] = module
 
-    print("Modules parsed: " + ", ".join(module.name for module in modules))
-    print_ast(modules)
+    print("Modules parsed: " + ", ".join(module for module in modules))
+
+    for name, module in modules.items():
+        # if name not in {'main', 'supermath'}:
+        print(f"Resolving names in {name}")
+        resolve_names(module, modules)
+
+    print("AST: ")
+    print_ast(list(modules.values()))
 
     # Codegen modules into C files
-    # out_path = os.path.join(dir, "c_out")
-    # shutil.rmtree(out_path, ignore_errors=True)
-    # os.makedirs(out_path)
+    out_path = os.path.join(dir, "c_out")
+    shutil.rmtree(out_path, ignore_errors=True)
+    os.makedirs(out_path)
     
-    # for module in modules:
-    #     gen_module(module, out_path)
+    for module in modules.values():
+        gen_and_write_module(module, out_path)
 
     # Build C program
     # bin_path = os.path.join(dir, "bin")
@@ -39,32 +47,25 @@ def build(dir, prog_name):
     # print(str.join(" ", cmd))
     # subprocess.run(cmd, check=True)
 
-def transpile_module(filepath):
+def open_and_parse_module(filepath):
+    print(f"Parsing module {filepath}")
     with open(filepath) as f:
         src = f.read()
     lexer = Lexer(src)
     tokens = lexer.tokenize()
+    # print(tokens)
     parser = Parser(tokens)
     module = parser.parse_module()
     return module
 
-def gen_module(module, out_dir):
+def gen_and_write_module(module, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, f"{module.name}.h"), "w") as h:
-        h.write(f"#ifndef {module.name.upper()}_H\n#define {module.name.upper()}_H\n\n")
-        for func in module.funcs:
-            h.write(gen_function_header(func) + "\n")
-        h.write(f"\n#endif\n")
+        header = gen_c_header(module) 
+        h.write(header)
     with open(os.path.join(out_dir, f"{module.name}.c"), "w") as c:
-        c.write(f'#include "{module.name}.h"\n\n')
-        for inc in module.includes:
-            c.write(f'#include {inc}\n')
-        c.write("\n")
-        for imp in module.imports:
-            c.write(f'#include "{imp}.h"\n')
-        c.write("\n")
-        for func in module.funcs:
-            c.write(gen_function_body(func) + "\n\n")
+        source = gen_c_source(module)
+        c.write(source)
 
 ### LEXING
 
@@ -99,7 +100,15 @@ class Lexer:
         ident = first
         while self.peek().isalnum() or self.peek() == '_':
             ident += self.advance()
-        if ident in {'int', 'return', 'module', 'import'}:
+        KEYWORDS = {
+            'int',
+            'return',
+            'module',
+            'import',
+            'extern',
+            'from'
+        }
+        if ident in KEYWORDS:
             return Token(ident.upper(), ident)
         return Token('IDENT', ident)
 
@@ -110,12 +119,12 @@ class Lexer:
         return Token('NUMBER', num)
 
     def read_string(self):
-        result = '"'
+        result = ''
         while True:
             ch = self.advance()
-            result += ch
             if ch == '"':
                 break
+            result += ch
         return Token('STRING', result)
 
     def next_token(self):
@@ -131,17 +140,24 @@ class Lexer:
         if ch == '"':
             return self.read_string()
         
-        mapping = {
-            '(': 'LPAREN', ')': 'RPAREN',
-            '{': 'LBRACE', '}': 'RBRACE',
-            ',': 'COMMA', ';': 'SEMICOLON',
-            '+': 'PLUS', '=': 'EQUAL',
-            '<': 'LT', '>': 'GT',
-            '.': 'PERIOD', '#': 'HASH',
+        SINGLE_CH_TOKENS = {
+            '(': 'LPAREN',
+            ')': 'RPAREN',
+            '{': 'LBRACE',
+            '}': 'RBRACE',
+            ',': 'COMMA',
+            ';': 'SEMICOLON',
+            '+': 'PLUS',
+            '=': 'EQUAL',
+            '<': 'LT',
+            '>': 'GT',
+            '.': 'PERIOD',
+            '#': 'HASH',
+            '*': 'STAR'
         }
 
-        if ch in mapping:
-            return Token(mapping[ch], ch)
+        if ch in SINGLE_CH_TOKENS:
+            return Token(SINGLE_CH_TOKENS[ch], ch)
         
         if ch == '\0':
             return Token('EOF', '')
@@ -183,8 +199,9 @@ class String(Expr):
         return f"Expr:String({self.value})"
 
 class Identifier(Expr):
-    def __init__(self, name):
+    def __init__(self, name, resolved=None):
         self.name = name
+        self.resolved = resolved
 
     def __repr__(self):
         return f"Expr:Identifier({self.name})"
@@ -199,9 +216,10 @@ class BinaryOp(Expr):
         return f"Expr:BinaryOp('{self.left}', '{self.op}', '{self.right}')"
 
 class Call(Expr):
-    def __init__(self, func_name, args):
+    def __init__(self, func_name, args, resolved=None):
         self.func_name = func_name
         self.args = args
+        self.resolved = resolved
     
     def __repr__(self):
         return f"Expr:Call({self.func_name}, {self.args})"
@@ -239,15 +257,32 @@ class Function(Node):
     def __repr__(self):
         return f"Function({self.return_type}, {self.name}, {self.params}, {self.body}"
 
+class ExternFunc(Node):
+    def __init__(self, return_type, name, param_types):
+        self.return_type = return_type
+        self.name = name
+        self.param_types = param_types
+
+    def __repr__(self):
+        return f"ExternFunc({self.return_type}, {self.name}, {self.param_types})"
+
+class ExternBlock(Node):
+    def __init__(self, header_name, functions):
+        self.header_name = header_name
+        self.functions = functions
+
+    def __repr__(self):
+        return f"ExternBlock({self.header_name}, {self.functions})"
+
 class Module(Node):
-    def __init__(self, name, imports, includes, funcs):
+    def __init__(self, name, imports, extern_blocks, funcs):
         self.name = name
         self.imports = imports
-        self.includes = includes
+        self.extern_blocks = extern_blocks
         self.funcs = funcs
 
     def __repr__(self):
-        return f"Module({self.name}, {self.imports}, {self.includes}, {self.funcs})"
+        return f"Module({self.name}, {self.imports}, {self.extern_blocks}, {self.funcs})"
 
 class Parser:
     def __init__(self, tokens):
@@ -265,11 +300,15 @@ class Parser:
         self.pos += 1
         return token
 
-    def expect(self, kind):
-        token = self.advance()
-        if token.kind != kind:
+    def expect(self, kind, optional=False):
+        token = self.peek()
+        if token.kind != kind and not optional:
             raise SyntaxError(f"Expected {kind}, got {token.kind}");
-        return token
+        if token.kind == kind:
+            self.advance()
+            return token
+        else:
+            return None
 
     def parse_module(self):
         self.expect('MODULE')
@@ -277,7 +316,7 @@ class Parser:
         self.expect('SEMICOLON')
 
         imports = []
-        includes = []
+        extern_blocks = []
         funcs = []
 
         while self.peek().kind != 'EOF':
@@ -285,19 +324,40 @@ class Parser:
                 self.advance()
                 imports.append(self.expect('IDENT').value)
                 self.expect('SEMICOLON')
-            elif self.peek().kind == 'HASH':
-                self.advance()
-                if self.expect('IDENT').value != 'include':
-                    raise SyntaxError("Expected include")
-                header = self.expect('LT').value + self.expect('IDENT').value
-                while self.peek().kind != 'GT':
-                    header += self.advance().value
-                header += self.expect('GT').value
-                includes.append(header)
+            elif self.peek().kind == 'EXTERN':
+                block = self.parse_extern_block()
+                extern_blocks.append(block)
             else:
                 funcs.append(self.parse_function())
 
-        return Module(name, imports, includes, funcs)
+        return Module(name, imports, extern_blocks, funcs)
+
+    def parse_extern_block(self):
+        self.expect('EXTERN')
+        self.expect('FROM')
+        header = self.expect('STRING').value
+        self.expect('LBRACE')
+        funcs = []
+        while self.peek().kind != 'RBRACE':
+            ret_type = self.expect('INT').value
+            name = self.expect('IDENT').value
+            self.expect('LPAREN')
+            param_types = []
+            if self.peek().kind != 'RPAREN':
+                while True:
+                    typ = self.expect('INT').value
+                    self.expect('STAR', optional=True)
+                    self.expect('IDENT') # skip param name
+                    param_types.append(typ)
+                    if self.peek().kind == 'COMMA':
+                        self.advance()
+                    else:
+                        break
+            self.expect('RPAREN')
+            self.expect('SEMICOLON')
+            funcs.append(ExternFunc(ret_type, name, param_types))
+        self.expect('RBRACE')
+        return ExternBlock(header, funcs)
 
     def parse_function(self):
         ret_type = self.expect('INT').value
@@ -328,7 +388,7 @@ class Parser:
             elif tok.kind == 'INT':
                 stmts.append(self.parse_var_decl())
             elif tok.kind == 'IDENT':
-                stmts.append(self.parse_call_stmt())
+                stmts.append(self.parse_expr_stmt())
         return stmts
 
     def parse_return(self):
@@ -345,7 +405,7 @@ class Parser:
         self.expect('SEMICOLON')
         return VarDecl(var_type, name, expr)
 
-    def parse_call_stmt(self):
+    def parse_expr_stmt(self):
         call = self.parse_call()
         self.expect('SEMICOLON')
         return ExprStmt(call)
@@ -396,10 +456,14 @@ def print_ast(node, indent = 0):
         print(f"{pad}Module({node.name})")
         for imp in node.imports:
             print(f"{pad}  Import({imp})")
-        for inc in node.includes:
-            print(f"{pad}  Include({inc})")
+        for extern_block in node.extern_blocks:
+            print(f"{pad}  ExternBlock({extern_block.header_name})")
+            for extern_func in extern_block.functions:
+                print_ast(extern_func, indent + 2) # ExternBlock is already indent + 1
         for func in node.funcs:
             print_ast(func, indent + 1)
+    elif isinstance(node, ExternFunc):
+        print(f"{pad}ExternFunc {node.return_type} {node.name}({", ".join(f"{typ}" for typ in node.param_types)})")
     elif isinstance(node, Function):
         print(f"{pad}Function {node.return_type} {node.name}({", ".join(f"{typ} {name}" for typ, name in node.params)})")
         for stmt in node.body:
@@ -418,12 +482,16 @@ def print_ast(node, indent = 0):
         for arg in node.args:
             print_ast(arg, indent + 2)
         print(f"{pad})")
+        if node.resolved:
+            print(f"{pad} -> resolves to {node.resolved.kind}")
     elif isinstance(node, BinaryOp):
         print(f"{pad}BinaryOp {node.op}")
         print_ast(node.left, indent + 1)
         print_ast(node.right, indent + 1)
     elif isinstance(node, Identifier):
         print(f"{pad}Identifer {node.name}")
+        if node.resolved:
+            print(f"{pad} -> resolves to {node.resolved.kind}")
     elif isinstance(node, Number):
         print(f"{pad}Number {node.value}")
     elif isinstance(node, String):
@@ -432,7 +500,119 @@ def print_ast(node, indent = 0):
         print(f"{pad}Unknown {node}")
 
 
+### NAME RESOLUTION
+
+class Symbol:
+    def __init__(self, kind, name, decl=None):
+        self.kind = kind
+        self.name = name
+        self.decl = decl
+
+    def __repr__(self):
+        return f"Symbol({self.kind, self.name})"
+
+class Scope:
+    def __init__(self, parent=None):
+        self.parent = parent
+        self.symbols = {} # name -> Symbol
+
+    def define(self, kind, name, decl=None):
+        if name in self.symbols:
+            raise Exception(f"Symbol already declared: {name}")
+        self.symbols[name] = Symbol(kind, name, decl);
+
+    def resolve(self, name):
+        if name in self.symbols:
+            return self.symbols[name]
+        elif self.parent:
+            return self.parent.resolve(name)
+        else:
+            raise Exception(f"Undefined symbol: {name}")
+
+def resolve_names(module, all_modules):
+    global_scope = Scope()
+
+    # Imported modules
+    for imp in module.imports:
+        imported_module = all_modules[imp]
+        imported_scope = build_exported_scope(imported_module)
+        for _, symbol in imported_scope.symbols.items():
+            global_scope.define(symbol.kind, symbol.name, symbol.decl)
+
+    # Extern blocks (C includes)
+    for block in module.extern_blocks:
+        for func in block.functions:
+            global_scope.define('func', func.name, func)
+
+    # Module-local functions
+    for func in module.funcs:
+        global_scope.define('func', func.name, func)
+
+    # Resolve names in every statement inside every function
+    for func in module.funcs:
+        func_scope = Scope(global_scope)
+        for _, param_name in func.params:
+            func_scope.define('param', param_name) # TODO: Params should have nodes too for Symbol decl?
+        for stmt in func.body:
+            resolve_stmt(stmt, func_scope)
+
+def resolve_stmt(stmt, scope):
+    if isinstance(stmt, VarDecl):
+        resolve_expr(stmt.expr, scope)
+        scope.define('var', stmt.name, stmt)
+    elif isinstance(stmt, Return):
+        resolve_expr(stmt.expr, scope)
+    elif isinstance(stmt, ExprStmt):
+        resolve_expr(stmt.expr, scope)
+    else:
+        raise Exception(f"Unknown stmt: {stmt}")
+
+def resolve_expr(expr, scope):
+    if isinstance(expr, Identifier):
+        symbol = scope.resolve(expr.name)
+        expr.resolved = symbol
+    elif isinstance(expr, Number):
+        pass
+    elif isinstance(expr, String):
+        pass
+    elif isinstance(expr, BinaryOp):
+        resolve_expr(expr.left, scope)
+        resolve_expr(expr.right, scope)
+    elif isinstance(expr, Call):
+        symbol = scope.resolve(expr.func_name) # functions are in global scope
+        expr.resolved = symbol
+        for arg in expr.args:
+            resolve_expr(arg, scope)
+
+def build_exported_scope(module):
+    scope = Scope()
+    # For now only functions are imported
+    for func in module.funcs:
+        scope.define('func', func.name, func)
+    return scope
+
 ### CODEGEN
+
+def gen_c_header(module):
+    header = ""
+    header += f"#ifndef {module.name.upper()}_H\n#define {module.name.upper()}_H\n\n"
+    for func in module.funcs:
+        header += gen_function_header(func) + "\n"
+    header += f"\n#endif\n"
+    return header
+
+def gen_c_source(module):
+    source = ""
+    source += f'#include "{module.name}.h"\n\n'
+    for extern_block in module.extern_blocks:
+        source += f'#include <{extern_block.header_name}>\n'
+    source += "\n"
+    for imp in module.imports:
+        source += f'#include "{imp}.h"\n'
+    source += "\n"
+    for func in module.funcs:
+        source += gen_function_body(func) + "\n\n"
+    return source
 
 def gen_function_header(func):
     params = ", ".join(f"{typ} {name}" for typ, name in func.params)
@@ -470,7 +650,7 @@ def gen_expr(expr):
         return str(expr.value)
 
     if isinstance(expr, String):
-        return expr.value # already quoted
+        return f'"{expr.value}"'
 
     if isinstance(expr, str) and expr.startswith('"'):
         return expr

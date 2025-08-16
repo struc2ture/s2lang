@@ -3,7 +3,10 @@ module main;
 import math;
 import supermath;
 
-#include <stdio.h>
+extern from "stdio.h"
+{
+    int printf(int a);
+}
 
 int main()
 {
