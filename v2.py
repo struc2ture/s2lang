@@ -3,7 +3,7 @@ import shutil
 import subprocess
 
 def main():
-    build("example", "example")
+    build("example_s2", "example")
     # transpile_module("example/main.s2", "out")
 
 
