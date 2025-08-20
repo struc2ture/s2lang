@@ -1,0 +1,8 @@
+module print;
+
+#include <stdio.h>
+
+void print_hello_world()
+{
+    printf("Hello world\n");
+}

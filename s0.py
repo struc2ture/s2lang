@@ -14,15 +14,18 @@ def main():
     prog_name = ""
     prog_name_i = 1
     global verbose
+    run = False
     for arg in sys.argv[1:]:
         if arg == "-v" or arg == "--verbose":
             verbose = True
         elif arg == "-o" or arg == "--out":
-            if i + 1 >= len(sys.argv):
+            if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("-"):
                 print_usage()
                 return 
             prog_name = sys.argv[i + 1]
             prog_name_i = i + 1
+        elif arg == "-r" or arg == "--run":
+            run = True
         i += 1
 
     build_dir = ""
@@ -35,10 +38,16 @@ def main():
 
     print(f'Building {build_dir} for "{prog_name}". Verbose={verbose}')
 
-    build(build_dir, prog_name)
+    exe_path = build(build_dir, prog_name)
+
+    if run:
+        subprocess.run(exe_path);
 
 def print_usage():
-    print("Usage: python3 s0.py -v ./build/dir -o prog_name")
+    print("Usage: python3 s0.py ./build/dir -o prog_name")
+    print("  -v, --verbose: verbose")
+    print("  -o, --out: program name")
+    print("  -r, --run: run after building")
 
 def build(dir, prog_name):
     out_path = os.path.join(dir, "c_out")
@@ -49,7 +58,8 @@ def build(dir, prog_name):
 
     bin_path = os.path.join(dir, "bin")
     shutil.rmtree(bin_path, ignore_errors=True)
-    clang_compile(modules, out_path, bin_path, prog_name)
+    exe_path = clang_compile(modules, out_path, bin_path, prog_name)
+    return exe_path
 
 def process_dir(dir, out_path):
     os.makedirs(out_path)
@@ -67,11 +77,11 @@ def clang_compile(modules, out_path, bin_path, prog_name):
     for module in modules:
         cmd.append(os.path.join(out_path, f'{module.name}.c'))
     cmd.append("-o")
-    exe_name = os.path.join(bin_path, prog_name)
-    cmd.append(exe_name)
+    exe_path = os.path.join(bin_path, prog_name)
+    cmd.append(exe_path)
     print(f'{str.join(" ", cmd)}\n')
     subprocess.run(cmd, check=True)
-    return exe_name
+    return exe_path
 
 def process_file(path, out_path):
     if verbose:
@@ -235,26 +245,25 @@ def generate_for_module(module, src):
 
     # emit c source
     c_src = ""
-    with open(f"example_s0/c_out/{module.name}.c", "w") as f:
-        c_src += f'#include "{module.name}.h"\n\n'
+    c_src += f'#include "{module.name}.h"\n\n'
 
-        #include c includes
-        any = False
-        for c_inc in module.c_includes:
-            c_src += f'#include {'"' if c_inc[1] == '"' else '<'}{c_inc[0]}{'"' if c_inc[1] == '"' else '>'}\n'
-            any = True
-        if any:
-            c_src += "\n"
+    #include c includes
+    any = False
+    for c_inc in module.c_includes:
+        c_src += f'#include {'"' if c_inc[1] == '"' else '<'}{c_inc[0]}{'"' if c_inc[1] == '"' else '>'}\n'
+        any = True
+    if any:
+        c_src += "\n"
 
-        #include modules
-        any = False
-        for imp in module.imports:
-            c_src += f'#include "{imp}.h"\n'
-            any = True
-        if any:
-            c_src += "\n"
+    #include modules
+    any = False
+    for imp in module.imports:
+        c_src += f'#include "{imp}.h"\n'
+        any = True
+    if any:
+        c_src += "\n"
 
-        c_src += copy_src_with_skips(src, module.extracted_ranges)
+    c_src += copy_src_with_skips(src, module.extracted_ranges)
 
     return h_src, c_src
 

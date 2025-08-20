@@ -1,0 +1,8 @@
+module main;
+
+import print;
+
+int main()
+{
+    print_hello_world();
+}
