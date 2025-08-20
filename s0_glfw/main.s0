@@ -1,0 +1,17 @@
+module main;
+
+import glfw_h;
+
+#include <GLFW/glfw3.h>
+
+int main()
+{
+    GLFWwindow *window = glfw_init(1000, 900);
+
+    while (!glfwWindowShouldClose(window))
+    {
+        glfwPollEvents();
+    }
+
+    return 0;
+}

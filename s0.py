@@ -4,8 +4,10 @@ import subprocess
 import sys
 
 verbose = False
+clang_arg = ""
 
 def main():
+    # print(sys.argv)
     if len(sys.argv) < 4:
         print_usage()
         return
@@ -13,6 +15,8 @@ def main():
     i = 1
     prog_name = ""
     prog_name_i = 1
+    global clang_arg
+    clang_arg_i = 1
     global verbose
     run = False
     for arg in sys.argv[1:]:
@@ -24,6 +28,12 @@ def main():
                 return 
             prog_name = sys.argv[i + 1]
             prog_name_i = i + 1
+        elif arg == "-c" or arg == "--clang":
+            if i + 1 >= len(sys.argv):
+                print_usage()
+                return 
+            clang_arg = sys.argv[i + 1]
+            clang_arg_i = i + 1
         elif arg == "-r" or arg == "--run":
             run = True
         i += 1
@@ -31,7 +41,7 @@ def main():
     build_dir = ""
     i = 1
     for arg in sys.argv[1:]:
-        if not arg.startswith("-") and i != prog_name_i:
+        if not arg.startswith("-") and i != prog_name_i and i != clang_arg_i:
             build_dir = arg
             break
         i += 1
@@ -48,6 +58,7 @@ def print_usage():
     print("  -v, --verbose: verbose")
     print("  -o, --out: program name")
     print("  -r, --run: run after building")
+    print("  -c, --clang: additional clang args")
 
 def build(dir, prog_name):
     out_path = os.path.join(dir, "c_out")
@@ -74,6 +85,8 @@ def process_dir(dir, out_path):
 def clang_compile(modules, out_path, bin_path, prog_name):
     os.makedirs(bin_path)
     cmd = ["clang"]
+    for arg in clang_arg.split(" "):
+        cmd.append(arg)
     for module in modules:
         cmd.append(os.path.join(out_path, f'{module.name}.c'))
     cmd.append("-o")
@@ -339,7 +352,9 @@ class Lexer:
             'module',
             'import',
             'include',
-            'struct'
+            'struct',
+            'typedef',
+            'define'
         }
         if ident in KEYWORDS:
             return Token(ident.upper(), ident, start_pos, self.pos)
@@ -389,7 +404,9 @@ class Lexer:
             '>': 'GT',
             '.': 'PERIOD',
             '#': 'HASH',
-            '*': 'STAR'
+            '*': 'STAR',
+            '/': 'SLASH',
+            '!': 'EXCLM'
         }
 
         if ch in SINGLE_CH_TOKENS:
