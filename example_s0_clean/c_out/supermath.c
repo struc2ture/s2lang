@@ -1,6 +1,6 @@
-module supermath;
+#include "supermath.h"
 
-import math;
+#include "math.h"
 
 int mul(int a, int b)
 {
@@ -14,8 +14,3 @@ Vec2 something(int a)
     return v;
 }
 
-struct Vec2
-{
-    int a;
-    float b;
-};
