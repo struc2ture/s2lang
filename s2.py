@@ -463,6 +463,7 @@ class Parser:
                 return self.parse_var_decl()
             else:
                 return self.parse_expr_stmt()
+        raise SyntaxError(f"Can't parse statement starting with {tok.kind}")
 
     def parse_return(self):
         self.expect('RETURN')
@@ -481,6 +482,7 @@ class Parser:
         else_block = None
         if self.peek().kind == 'ELSE':
             self.advance()
+            self.expect('LBRACE')
             else_block = self.parse_block()
             self.expect('RBRACE')
         return If(cond, then_block, else_block)
@@ -789,50 +791,51 @@ def gen_function_header(func):
 
 def gen_function_body(func):
     header = gen_function_header(func).rstrip(";")
-    body = "\n".join("    " + gen_stmt(stmt) for stmt in func.body)
+    body = "\n".join(gen_stmt(stmt, indent=1) for stmt in func.body)
     return f"{header}\n{{\n{body}\n}}"
 
-def gen_stmt(stmt):
+def gen_stmt(stmt, indent=0):
+    pad = "    " * indent
     if isinstance(stmt, Return):
-        return f"return {gen_expr(stmt.expr)};"
+        return f"{pad}return {gen_expr(stmt.expr)};"
 
     if isinstance(stmt, VarDecl):
-        return f"{stmt.var_type} {stmt.name} = {gen_expr(stmt.expr)};"
+        return f"{pad}{stmt.var_type} {stmt.name} = {gen_expr(stmt.expr)};"
 
     if isinstance(stmt, ExprStmt):
-        return f"{gen_expr(stmt.expr)};"
+        return f"{pad}{gen_expr(stmt.expr)};"
 
     if isinstance(stmt, If):
-        out = f"if({gen_expr(stmt.cond)})\n"
-        out += "{\n"
-        out += '\n'.join(gen_stmt(then_stmt) for then_stmt in stmt.then_branch)
-        out += "\n}\n"
+        out =  f"{pad}if({gen_expr(stmt.cond)})\n"
+        out += f"{pad}{{\n"
+        out += '\n'.join(gen_stmt(then_stmt, indent + 1) for then_stmt in stmt.then_branch)
+        out += f"\n{pad}}}"
         if stmt.else_branch:
-            out += "else\n"
-            out += "{\n"
-            out += '\n'.join(gen_stmt(else_stmt) for else_stmt in stmt.then_branch)
-            out += "\n}\n"
+            out += f"\n{pad}else\n"
+            out += f"{pad}{{\n"
+            out += '\n'.join(gen_stmt(else_stmt, indent + 1) for else_stmt in stmt.then_branch)
+            out += f"\n{pad}}}"
         return out
 
     if isinstance(stmt, While):
-        out = f"while({gen_expr(stmt.cond)})\n"
-        out += "{\n"
-        out += '\n'.join(gen_stmt(body_stmt) for body_stmt in stmt.body)
-        out += "\n}\n"
+        out =  f"{pad}while({gen_expr(stmt.cond)})\n"
+        out += f"{pad}{{\n"
+        out += '\n'.join(gen_stmt(body_stmt, indent + 1) for body_stmt in stmt.body)
+        out += f"\n{pad}}}"
         return out
 
     if isinstance(stmt, For):
-        out = f"for({gen_stmt(stmt.init_stmt)} {gen_expr(stmt.cond_expr)}; {gen_expr(stmt.post_expr)})\n"
-        out += "{\n"
-        out += '\n'.join(gen_stmt(body_stmt) for body_stmt in stmt.body)
-        out += "\n}\n"
+        out =  f"{pad}for({gen_stmt(stmt.init_stmt)} {gen_expr(stmt.cond_expr)}; {gen_expr(stmt.post_expr)})\n"
+        out += f"{pad}{{\n"
+        out += '\n'.join(gen_stmt(body_stmt, indent + 1) for body_stmt in stmt.body)
+        out += f"\n{pad}}}"
         return out
 
     if isinstance(stmt, Break):
-        return "break;"
+        return f"{pad}break;"
 
     if isinstance(stmt, Continue):
-        return "continue;"
+        return f"{pad}continue;"
 
     raise NotImplementedError(f"Unknown stmt: {stmt.__class__.__name__}")
 

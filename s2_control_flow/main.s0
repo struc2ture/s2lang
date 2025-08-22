@@ -7,7 +7,17 @@ int main()
     {
         int y = 9;
         int z = y;
+
+        while (z)
+        {
+            int j = z;
+        }
     }
+    else
+    {
+        int z = x;
+    }
+
     int z = x;
 
     while (x + 1)
