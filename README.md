@@ -1,0 +1,12 @@
+# s2 to do
+- parsing more different expression types: unary operations; different operands for binary, etc.
+- precedence
+- block node + one-line ifs, etc.
+- structs
+- type checking
+- diagnostics: where error happened
+- assignment - a binary op?
+- do-while
+- semantic analysis on break and continue (only in loops and switch)
+- switch-case
+- proper code gen indentation

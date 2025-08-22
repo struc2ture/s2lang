@@ -27,12 +27,12 @@ def build(dir, prog_name):
     print_ast(list(modules.values()))
 
     # Codegen modules into C files
-    # out_path = os.path.join(dir, "c_out")
-    # shutil.rmtree(out_path, ignore_errors=True)
-    # os.makedirs(out_path)
+    out_path = os.path.join(dir, "c_out")
+    shutil.rmtree(out_path, ignore_errors=True)
+    os.makedirs(out_path)
     
-    # for module in modules.values():
-    #     gen_and_write_module(module, out_path)
+    for module in modules.values():
+        gen_and_write_module(module, out_path)
 
     # Build C program
     # bin_path = os.path.join(dir, "bin")
@@ -249,6 +249,22 @@ class While(Stmt):
 
     def __repr__(self):
         return f"Stmt:While({self.cond}, {self.body})"
+    
+class For(Stmt):
+    def __init__(self, init_stmt, cond_expr, post_expr, body):
+        self.init_stmt = init_stmt
+        self.cond_expr = cond_expr
+        self.post_expr = post_expr
+        self.body = body
+
+    def __repr__(self):
+        return f"Stmt:For({self.init_stmt}, {self.cond_expr}, {self.post_expr}, {self.body}"
+
+class Break(Stmt):
+    pass
+
+class Continue(Stmt):
+    pass
 
 class Return(Stmt):
     def __init__(self, expr):
@@ -320,6 +336,18 @@ class Parser:
 
     def peek2(self):
         return self.tokens[self.pos + 1]
+
+    def peek_is_kind(self, kind):
+        if self.peek().kind == kind:
+            return self.peek()
+        else:
+            return None
+
+    def peek_is_value(self, value):
+        if self.peek().value == value:
+            return self.peek()
+        else:
+            return None
 
     def advance(self):
         token = self.peek()
@@ -420,6 +448,16 @@ class Parser:
             return self.parse_if()
         elif tok.kind == 'WHILE':
             return self.parse_while()
+        elif tok.kind == 'FOR':
+            return self.parse_for()
+        elif tok.kind == 'BREAK':
+            self.advance()
+            self.expect('SEMICOLON')
+            return Break()
+        elif tok.kind == 'CONTINUE':
+            self.advance()
+            self.expect('SEMICOLON')
+            return Continue()
         elif tok.kind == 'IDENT':
             if self.peek2().kind == 'IDENT':
                 return self.parse_var_decl()
@@ -456,6 +494,29 @@ class Parser:
         body = self.parse_block()
         self.expect('RBRACE')
         return While(cond, body)
+
+    def parse_for(self):
+        self.expect('FOR')
+        self.expect('LPAREN')
+        # Init
+        if self.peek().kind != 'SEMICOLON':
+            if self.peek().kind == 'IDENT' and self.peek2().kind == 'IDENT':
+                init_stmt = self.parse_var_decl()
+            else:
+                init_stmt = self.parse_expr_stmt()
+        # Condition
+        if self.peek().kind != 'SEMICOLON':
+            cond_expr = self.parse_expr()
+        self.expect('SEMICOLON')
+        # Post
+        if self.peek().kind != 'RPAREN':
+            post_expr = self.parse_expr()
+        self.expect('RPAREN')
+        # Body
+        self.expect('LBRACE')
+        body = self.parse_block()
+        self.expect('RBRACE')
+        return For(init_stmt, cond_expr, post_expr, body)
 
     def parse_var_decl(self):
         var_type = self.expect('IDENT').value
@@ -545,6 +606,18 @@ def print_ast(node, indent = 0):
         print(f"{pad}While")
         print_ast(node.cond, indent + 1)
         print_ast(node.body, indent + 1)
+    elif isinstance(node, For):
+        print(f"{pad}For")
+        print_ast(node.init_stmt, indent + 1)
+        print_ast(node.cond_expr, indent + 1)
+        print_ast(node.post_expr, indent + 1)
+        print_ast(node.body, indent + 1)
+    elif isinstance(node, Break):
+        print(f"{pad}Break")
+    elif isinstance(node, Break):
+        print(f"{pad}Break")
+    elif isinstance(node, Continue):
+        print(f"{pad}Continue")
     elif isinstance(node, ExprStmt):
         print(f"{pad}ExprStmt")
         print_ast(node.expr, indent + 1)
@@ -569,7 +642,6 @@ def print_ast(node, indent = 0):
         print(f"{pad}String {node.value}")
     else:
         print(f"{pad}Unknown {node}")
-
 
 ### NAME RESOLUTION
 
@@ -645,9 +717,22 @@ def resolve_stmt(stmt, scope):
             for else_stmt in stmt.else_branch:
                 resolve_stmt(else_stmt, else_scope)
     elif isinstance(stmt, While):
-        resolve_expr(stmt.cond)
+        resolve_expr(stmt.cond, scope)
+        body_scope = Scope(scope)
         for body_stmt in stmt.body:
-            resolve_stmt(body_stmt)
+            resolve_stmt(body_stmt, body_scope)
+    elif isinstance(stmt, For):
+        for_outer_scope = Scope(scope)
+        resolve_stmt(stmt.init_stmt, for_outer_scope)
+        resolve_expr(stmt.cond_expr, for_outer_scope)
+        resolve_expr(stmt.post_expr, for_outer_scope)
+        body_scope = Scope(for_outer_scope)
+        for body_stmt in stmt.body:
+            resolve_stmt(body_stmt, body_scope)
+    elif isinstance(stmt, Continue):
+        pass
+    elif isinstance(stmt, Break):
+        pass
     else:
         raise Exception(f"Unknown stmt: {stmt}")
 
@@ -717,7 +802,39 @@ def gen_stmt(stmt):
     if isinstance(stmt, ExprStmt):
         return f"{gen_expr(stmt.expr)};"
 
-    raise NotImplementedError("Unknown stmt")
+    if isinstance(stmt, If):
+        out = f"if({gen_expr(stmt.cond)})\n"
+        out += "{\n"
+        out += '\n'.join(gen_stmt(then_stmt) for then_stmt in stmt.then_branch)
+        out += "\n}\n"
+        if stmt.else_branch:
+            out += "else\n"
+            out += "{\n"
+            out += '\n'.join(gen_stmt(else_stmt) for else_stmt in stmt.then_branch)
+            out += "\n}\n"
+        return out
+
+    if isinstance(stmt, While):
+        out = f"while({gen_expr(stmt.cond)})\n"
+        out += "{\n"
+        out += '\n'.join(gen_stmt(body_stmt) for body_stmt in stmt.body)
+        out += "\n}\n"
+        return out
+
+    if isinstance(stmt, For):
+        out = f"for({gen_stmt(stmt.init_stmt)} {gen_expr(stmt.cond_expr)}; {gen_expr(stmt.post_expr)})\n"
+        out += "{\n"
+        out += '\n'.join(gen_stmt(body_stmt) for body_stmt in stmt.body)
+        out += "\n}\n"
+        return out
+
+    if isinstance(stmt, Break):
+        return "break;"
+
+    if isinstance(stmt, Continue):
+        return "continue;"
+
+    raise NotImplementedError(f"Unknown stmt: {stmt.__class__.__name__}")
 
 def gen_expr(expr):
     if isinstance(expr, BinaryOp):

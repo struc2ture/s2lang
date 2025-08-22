@@ -1,0 +1,28 @@
+#include "main.h"
+
+
+
+int main()
+{
+    int x = 1;
+    if(x)
+{
+int y = 9;
+int z = y;
+}
+
+    int z = x;
+    while(x + 1)
+{
+int y = 10;
+continue;
+}
+
+    for(int i = 0; i + 10; i + 10)
+{
+int a = 0;
+break;
+}
+
+}
+
