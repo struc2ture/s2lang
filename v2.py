@@ -3,7 +3,7 @@ import shutil
 import subprocess
 
 def main():
-    build("example_s2", "example")
+    build("s2_control_flow", "main")
     # transpile_module("example/main.s2", "out")
 
 
@@ -27,12 +27,12 @@ def build(dir, prog_name):
     print_ast(list(modules.values()))
 
     # Codegen modules into C files
-    out_path = os.path.join(dir, "c_out")
-    shutil.rmtree(out_path, ignore_errors=True)
-    os.makedirs(out_path)
+    # out_path = os.path.join(dir, "c_out")
+    # shutil.rmtree(out_path, ignore_errors=True)
+    # os.makedirs(out_path)
     
-    for module in modules.values():
-        gen_and_write_module(module, out_path)
+    # for module in modules.values():
+    #     gen_and_write_module(module, out_path)
 
     # Build C program
     # bin_path = os.path.join(dir, "bin")
@@ -105,7 +105,16 @@ class Lexer:
             'module',
             'import',
             'extern',
-            'from'
+            'from',
+            'if',
+            'else',
+            'for',
+            'while',
+            'continue',
+            'break',
+            'switch',
+            'case',
+            'do'
         }
         if ident in KEYWORDS:
             return Token(ident.upper(), ident)
@@ -152,7 +161,8 @@ class Lexer:
             '>': 'GT',
             '.': 'PERIOD',
             '#': 'HASH',
-            '*': 'STAR'
+            '*': 'STAR',
+            '!': 'EXCLM'
         }
 
         if ch in SINGLE_CH_TOKENS:
@@ -222,6 +232,23 @@ class Call(Expr):
     
     def __repr__(self):
         return f"Expr:Call({self.func_name}, {self.args})"
+
+class If(Stmt):
+    def __init__(self, cond, then_branch, else_branch=None):
+        self.cond = cond
+        self.then_branch = then_branch
+        self.else_branch = else_branch
+
+    def __repr__(self):
+        return f"Stmt:If({self.cond}, {self.then_branch}, {self.else_branch})"
+
+class While(Stmt):
+    def __init__(self, cond, body):
+        self.cond = cond
+        self.body = body
+
+    def __repr__(self):
+        return f"Stmt:While({self.cond}, {self.body})"
 
 class Return(Stmt):
     def __init__(self, expr):
@@ -381,21 +408,54 @@ class Parser:
     def parse_block(self):
         stmts = []
         while self.peek().kind != 'RBRACE':
-            tok = self.peek()
-            if tok.kind == 'RETURN':
-                stmts.append(self.parse_return())
-            elif tok.kind == 'IDENT':
-                if self.peek2().kind == 'IDENT':
-                    stmts.append(self.parse_var_decl())
-                else:
-                    stmts.append(self.parse_expr_stmt())
+            stmt = self.parse_stmt()
+            stmts.append(stmt)
         return stmts
+    
+    def parse_stmt(self):
+        tok = self.peek()
+        if tok.kind == 'RETURN':
+            return self.parse_return()
+        elif tok.kind == 'IF':
+            return self.parse_if()
+        elif tok.kind == 'WHILE':
+            return self.parse_while()
+        elif tok.kind == 'IDENT':
+            if self.peek2().kind == 'IDENT':
+                return self.parse_var_decl()
+            else:
+                return self.parse_expr_stmt()
 
     def parse_return(self):
         self.expect('RETURN')
         expr = self.parse_expr()
         self.expect('SEMICOLON')
         return Return(expr)
+    
+    def parse_if(self):
+        self.expect('IF')
+        self.expect('LPAREN')
+        cond = self.parse_expr()
+        self.expect('RPAREN')
+        self.expect('LBRACE')
+        then_block = self.parse_block()
+        self.expect('RBRACE')
+        else_block = None
+        if self.peek().kind == 'ELSE':
+            self.advance()
+            else_block = self.parse_block()
+            self.expect('RBRACE')
+        return If(cond, then_block, else_block)
+
+    def parse_while(self):
+        self.expect('WHILE')
+        self.expect('LPAREN')
+        cond = self.parse_expr()
+        self.expect('RPAREN')
+        self.expect('LBRACE')
+        body = self.parse_block()
+        self.expect('RBRACE')
+        return While(cond, body)
 
     def parse_var_decl(self):
         var_type = self.expect('IDENT').value
@@ -406,6 +466,7 @@ class Parser:
         return VarDecl(var_type, name, expr)
 
     def parse_expr_stmt(self):
+        # TODO: Support any expression, not just function call
         call = self.parse_call()
         self.expect('SEMICOLON')
         return ExprStmt(call)
@@ -474,6 +535,16 @@ def print_ast(node, indent = 0):
     elif isinstance(node, Return):
         print(f"{pad}Return")
         print_ast(node.expr, indent + 1)
+    elif isinstance(node, If):
+        print(f"{pad}If")
+        print_ast(node.cond, indent + 1)
+        print_ast(node.then_branch, indent + 1)
+        if node.else_branch:
+            print_ast(node.else_branch, indent + 1)
+    elif isinstance(node, While):
+        print(f"{pad}While")
+        print_ast(node.cond, indent + 1)
+        print_ast(node.body, indent + 1)
     elif isinstance(node, ExprStmt):
         print(f"{pad}ExprStmt")
         print_ast(node.expr, indent + 1)
@@ -564,6 +635,19 @@ def resolve_stmt(stmt, scope):
         resolve_expr(stmt.expr, scope)
     elif isinstance(stmt, ExprStmt):
         resolve_expr(stmt.expr, scope)
+    elif isinstance(stmt, If):
+        resolve_expr(stmt.cond, scope)
+        then_scope = Scope(scope)
+        for then_stmt in stmt.then_branch:
+            resolve_stmt(then_stmt, then_scope)
+        if stmt.else_branch:
+            else_scope = Scope(scope)
+            for else_stmt in stmt.else_branch:
+                resolve_stmt(else_stmt, else_scope)
+    elif isinstance(stmt, While):
+        resolve_expr(stmt.cond)
+        for body_stmt in stmt.body:
+            resolve_stmt(body_stmt)
     else:
         raise Exception(f"Unknown stmt: {stmt}")
 
