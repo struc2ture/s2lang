@@ -10,6 +10,7 @@
 - semantic analysis on break and continue (only in loops and switch)
 - switch-case
 - proper code gen indentation
+- booleans
 
 # s2: big list of stuff
 - named params
@@ -22,3 +23,5 @@
 - function declarations are statements?
 - defer
 - module namespacing?
+- basic generics (for containers, etc.)
+- string library

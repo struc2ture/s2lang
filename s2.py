@@ -1,11 +1,11 @@
 import os
 import shutil
 import subprocess
+import sys
 
 def main():
-    build("s2_control_flow", "main")
-    # transpile_module("example/main.s2", "out")
-
+    build_folder = sys.argv[1]
+    build(build_folder, "example")
 
 def build(dir, prog_name):
     # Parse modules
@@ -19,7 +19,6 @@ def build(dir, prog_name):
     print("Modules parsed: " + ", ".join(module for module in modules))
 
     for name, module in modules.items():
-        # if name not in {'main', 'supermath'}:
         print(f"Resolving names in {name}")
         resolve_names(module, modules)
 
@@ -53,7 +52,7 @@ def open_and_parse_module(filepath):
         src = f.read()
     lexer = Lexer(src)
     tokens = lexer.tokenize()
-    # print(tokens)
+    print(tokens)
     parser = Parser(tokens)
     module = parser.parse_module()
     return module
@@ -70,12 +69,14 @@ def gen_and_write_module(module, out_dir):
 ### LEXING
 
 class Token:
-    def __init__(self, kind, value):
+    def __init__(self, kind, value, line, column):
         self.kind = kind
         self.value = value
+        self.line = line
+        self.column = column
 
     def __repr__(self):
-        return f"Token({self.kind}, {self.value!r})"
+        return f"Token({self.kind}, {self.value!r}, [{self.line}:{self.column}])"
 
 
 class Lexer:
@@ -83,21 +84,32 @@ class Lexer:
         self.src = src
         self.pos = 0
         self.len = len(src)
+        self.line = 1
+        self.column = 1
 
     def peek(self):
         return self.src[self.pos] if self.pos < self.len else '\0'
 
+    def peek2(self):
+        return self.src[self.pos + 1] if self.pos < (self.len - 1) else '\0'
+
     def advance(self):
         ch = self.peek()
         self.pos += 1
+        self.column += 1
+        if ch == '\n':
+            self.line += 1
+            self.column = 1
         return ch
 
     def skip_whitespace(self):
         while self.peek() in ' \r\t\n':
             self.advance()
 
-    def match_keyword_or_indent(self, first):
-        ident = first
+    def match_keyword_or_indent(self):
+        tok_line = self.line
+        tok_column = self.column
+        ident = self.advance()
         while self.peek().isalnum() or self.peek() == '_':
             ident += self.advance()
         KEYWORDS = {
@@ -117,33 +129,38 @@ class Lexer:
             'do'
         }
         if ident in KEYWORDS:
-            return Token(ident.upper(), ident)
-        return Token('IDENT', ident)
+            return Token(ident.upper(), ident, tok_line, tok_column)
+        return Token('IDENT', ident, tok_line, tok_column)
 
-    def match_number(self, first):
-        num = first
+    def match_number(self):
+        tok_line = self.line
+        tok_column = self.column
+        num = self.advance()
         while self.peek().isdigit():
             num += self.advance()
-        return Token('NUMBER', num)
+        return Token('NUMBER', num, tok_line, tok_column)
 
     def read_string(self):
+        tok_line = self.line
+        tok_column = self.column
+        self.advance() # skip opening "
         result = ''
         while True:
             ch = self.advance()
             if ch == '"':
                 break
             result += ch
-        return Token('STRING', result)
+        return Token('STRING', result, tok_line, tok_column)
 
     def next_token(self):
         self.skip_whitespace()
-        ch = self.advance()
+        ch = self.peek()
 
         if ch.isalpha() or ch == '_':
-            return self.match_keyword_or_indent(ch)
+            return self.match_keyword_or_indent()
         
         if ch.isdigit():
-            return self.match_number(ch)
+            return self.match_number()
 
         if ch == '"':
             return self.read_string()
@@ -166,12 +183,14 @@ class Lexer:
         }
 
         if ch in SINGLE_CH_TOKENS:
-            return Token(SINGLE_CH_TOKENS[ch], ch)
+            tok = Token(SINGLE_CH_TOKENS[ch], ch, self.line, self.column)
+            self.advance()
+            return tok
         
         if ch == '\0':
-            return Token('EOF', '')
+            return Token('EOF', '', self.line, self.column)
         
-        raise SyntaxError(f'Unexpected character: {ch}')
+        raise SyntaxError(f'Unexpected character: {ch} at {self.line}:{self.column}')
     
     def tokenize(self):
         tokens = []
@@ -614,8 +633,6 @@ def print_ast(node, indent = 0):
         print_ast(node.cond_expr, indent + 1)
         print_ast(node.post_expr, indent + 1)
         print_ast(node.body, indent + 1)
-    elif isinstance(node, Break):
-        print(f"{pad}Break")
     elif isinstance(node, Break):
         print(f"{pad}Break")
     elif isinstance(node, Continue):
